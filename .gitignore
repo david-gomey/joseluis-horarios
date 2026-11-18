@@ -1,0 +1,8 @@
+node_modules
+dist
+*.local
+.DS_Store
+# Datos reales de la tienda: no se suben al repositorio (es público)
+datos/
+*.pdf
+*.tsbuildinfo
