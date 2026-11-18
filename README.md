@@ -24,7 +24,7 @@ Con Supabase configurado (variables en `.env.local`), hay que entrar con email y
 
 - Cada tienda es una fila de la tabla `stores` con todos sus datos en un JSON (`data`).
 - `store_members` indica quién puede verla y editarla. Desde *Ajustes → Compartir* se da acceso a otra cuenta por su email.
-- Si dos dispositivos guardan a la vez, gana el primero y el otro recarga sus datos (campo `revision`).
+- Si dos dispositivos guardan a la vez, el segundo detecta el conflicto con el campo `revision`, junta sus cambios casilla a casilla con los del primero y vuelve a guardar. No se pierde nada salvo que las dos toquen la misma casilla; en ese caso gana el último.
 - Los cambios hechos en otro dispositivo aparecen solos (Realtime).
 - Las políticas RLS impiden que nadie más vea los datos.
 

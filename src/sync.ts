@@ -1,6 +1,8 @@
 import type { RealtimeChannel } from '@supabase/supabase-js'
 import { parseBackup } from './lib/defaults'
+import { rebase } from './lib/merge'
 import { supabase } from './lib/supabase'
+import type { Data } from './lib/types'
 import { useStore } from './store'
 
 /**
@@ -18,6 +20,8 @@ let saving = false
 let channel: RealtimeChannel | null = null
 let unsubscribeStore: (() => void) | null = null
 let currentUser: string | null = null
+/** Última versión que sabemos que está en la base de datos (para juntar cambios si hay conflicto) */
+let base: Data | null = null
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String((e as { message?: string })?.message ?? e))
 
@@ -35,11 +39,37 @@ async function fetchStore() {
   return data[0] as { id: string; data: unknown; revision: number } | undefined
 }
 
-async function reloadFromRemote(message: string | null) {
+async function reloadFromRemote() {
   const row = await fetchStore()
   if (!row) return
-  useStore.getState().applyRemote(parseBackup(row.data), row.revision, row.id)
-  useStore.setState({ sync: 'saved', syncMessage: message })
+  base = parseBackup(row.data)
+  useStore.getState().applyRemote(base, row.revision, row.id)
+  useStore.setState({ sync: 'saved' })
+}
+
+/** Otro dispositivo guardó antes: se juntan nuestros cambios con los suyos y se vuelve a guardar */
+async function resolveConflict() {
+  const row = await fetchStore()
+  if (!row) return
+  const remote = parseBackup(row.data)
+  if (!base) {
+    base = remote
+    useStore.getState().applyRemote(remote, row.revision, row.id)
+    useStore.setState({
+      sync: 'saved',
+      syncMessage: 'Se han cargado cambios hechos desde otro dispositivo. Revisa tu último cambio por si hay que repetirlo.',
+    })
+    return
+  }
+  const merged = rebase(base, useStore.getState().data, remote)
+  base = remote
+  useStore.setState({
+    data: merged,
+    revision: row.revision,
+    dirty: true,
+    sync: 'pending',
+  })
+  scheduleSave(0)
 }
 
 function scheduleSave(delay = SAVE_DELAY) {
@@ -63,12 +93,10 @@ async function save() {
       .select('revision')
     if (error) throw error
     if (!rows.length) {
-      // Otro dispositivo guardó antes: nos quedamos con su versión
-      await reloadFromRemote(
-        'Se han cargado cambios hechos desde otro dispositivo. Revisa tu último cambio por si hay que repetirlo.',
-      )
+      await resolveConflict()
       return
     }
+    base = data
     const stillSame = useStore.getState().data === data
     useStore.setState({
       revision: rows[0].revision,
@@ -100,7 +128,7 @@ function subscribeRealtime(storeId: string) {
         const rev = (payload.new as { revision?: number }).revision ?? 0
         const s = useStore.getState()
         if (s.revision !== null && rev > s.revision && !saving && !s.dirty) {
-          void reloadFromRemote(null)
+          void reloadFromRemote()
         }
       },
     )
@@ -121,13 +149,16 @@ export async function startSync(userId: string) {
       const { data: created, error } = await supabase.rpc('create_store', { p_name: 'Mi tienda', p_data: initial })
       if (error) throw error
       const store = created as { id: string; data: unknown; revision: number }
-      useStore.getState().applyRemote(parseBackup(store.data), store.revision, store.id)
+      base = parseBackup(store.data)
+      useStore.getState().applyRemote(base, store.revision, store.id)
     } else if (local.storeId === row.id && local.revision === row.revision && local.dirty) {
       // Cambios hechos sin conexión sobre la última versión: se suben
+      base = parseBackup(row.data)
       useStore.setState({ sync: 'pending' })
       scheduleSave(0)
     } else {
-      useStore.getState().applyRemote(parseBackup(row.data), row.revision, row.id)
+      base = parseBackup(row.data)
+      useStore.getState().applyRemote(base, row.revision, row.id)
     }
     if (useStore.getState().sync === 'loading') useStore.setState({ sync: 'saved' })
     subscribeRealtime(useStore.getState().storeId!)
@@ -151,6 +182,7 @@ export async function startSync(userId: string) {
 
 export function stopSync() {
   currentUser = null
+  base = null
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = null
   unsubscribeStore?.()

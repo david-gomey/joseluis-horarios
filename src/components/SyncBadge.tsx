@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import { useStore } from '../store'
 
 const LABELS = {
@@ -20,14 +21,17 @@ export function SyncBadge() {
         <span className="sync-dot" aria-hidden />
         <span className="hide-sm">{text}</span>
       </span>
-      {message && (
-        <div className="toast" role="alert">
-          <span>{message}</span>
-          <button className="btn ghost small" onClick={() => useStore.setState({ syncMessage: null })}>
-            Entendido
-          </button>
-        </div>
-      )}
+      {/* Fuera de la barra superior: su backdrop-filter descuadraría el position: fixed */}
+      {message &&
+        createPortal(
+          <div className="toast" role="alert">
+            <span>{message}</span>
+            <button className="btn ghost small" onClick={() => useStore.setState({ syncMessage: null })}>
+              Entendido
+            </button>
+          </div>,
+          document.body,
+        )}
     </>
   )
 }
